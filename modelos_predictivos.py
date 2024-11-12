@@ -1,112 +1,92 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
-import pandas as pd
+from pydantic import BaseModel
 import onnxruntime as rt
 
-# Load both ONNX models
-try:
-    cacao_session = rt.InferenceSession("rf_model_cacao.onnx")
-    print("Modelo de cacao cargado exitosamente.")
-except Exception as e:
-    print("Error al cargar el modelo de cacao ONNX:", e)
+# Load ONNX models
+models = {
+    "cacao": "rf_model_cacao.onnx",
+    "cafe": "coffee_sales_model.onnx",
+    # Paths for frijol and maiz models would be added here as needed
+}
+sessions = {}
 
-try:
-    coffee_session = rt.InferenceSession("coffee_sales_model.onnx")
-    print("Modelo de café cargado exitosamente.")
-except Exception as e:
-    print("Error al cargar el modelo de café ONNX:", e)
+# Try loading each model into sessions
+for crop, model_path in models.items():
+    try:
+        sessions[crop] = rt.InferenceSession(model_path)
+        print(f"Modelo de {crop} cargado exitosamente.")
+    except Exception as e:
+        print(f"Error al cargar el modelo de {crop}: {e}")
 
 # Create the FastAPI instance
 app = FastAPI()
 
-# Define the data models for the requests
-class CacaoPredictionRequest(BaseModel):
-    Area_Sembrada: float
-    Area_Cosechada: float
-    Produccion: float
-
-class CoffeePredictionRequest(BaseModel):
-    coffee_acreage: float
-    coffee_improved_acreage: float
-    coffee_improved_cost: float
-    coffee_acreage_fertilizer: float
-    coffee_fertilizer_cost: float
-    coffee_chemical_acreage: float
-    coffee_chemical_cost: float
-    coffee_machinery_acreage: float
-    coffee_machinery_cost: float
-    coffee_harvested: float
-    coffee_sold_price: float
-    coffee_harvest_loss: float
+# Define data model
+class PredictionRequest(BaseModel):
+    crop_type: str
+    parameters: dict
 
 @app.post("/predict")
-def predict(request: dict):
-    # Determine if the request is for cacao or coffee based on the keys in the JSON
-    if "Area_Sembrada" in request and "Area_Cosechada" in request and "Produccion" in request:
-        # Convert the request to CacaoPredictionRequest model
-        data = CacaoPredictionRequest(**request)
-        input_data = [[data.Area_Sembrada, data.Area_Cosechada, data.Produccion]]
+def predict(request: PredictionRequest):
+    crop_type = request.crop_type.lower()
+    input_data = request.parameters
 
-        # Run prediction with the cacao model
-        try:
-            input_name = cacao_session.get_inputs()[0].name
-            prediction = cacao_session.run(None, {input_name: input_data})[0][0]
-            
-            # Classify the prediction result
+    # Check if the model for the specified crop exists
+    if crop_type not in sessions:
+        raise HTTPException(status_code=400, detail="Tipo de cultivo no soportado")
 
-
-            if prediction < 0.3:
-                clasificacion = "bajo"
-            elif 0.3 <= prediction < 0.7:
-                clasificacion = "medio"
-            else:
-                clasificacion = "alto"
-
-            # Log the classification in the console
-            print(f'Clasificación de rendimiento: {clasificacion}')
+    # Prepare input format based on crop type
+    try:
+        # Specific input for cacao
+        if crop_type == "cacao":
+            if not all(key in input_data for key in ["Area_Sembrada", "Area_Cosechada", "Produccion"]):
+                raise HTTPException(status_code=400, detail="Datos de entrada incompletos para cacao")
+            input_values = [[
+                input_data["Area_Sembrada"],
+                input_data["Area_Cosechada"],
+                input_data["Produccion"]
+            ]]
+            # Classification logic specific to cacao
+            input_name = sessions[crop_type].get_inputs()[0].name
+            prediction = sessions[crop_type].run(None, {input_name: input_values})[0][0]
+            clasificacion = "bajo" if prediction < 0.3 else "medio" if prediction < 0.7 else "alto"
 
             return {
                 "Modelo": "Cacao",
                 "Rendimiento_Predicho": float(prediction),
                 "Clasificacion": clasificacion
             }
-        except Exception as e:
-            print("Error al realizar la predicción de cacao:", e)
-            raise HTTPException(status_code=500, detail=f"Error en la predicción de cacao: {str(e)}")
 
-    elif all(key in request for key in [
-        'coffee_acreage', 'coffee_improved_acreage', 'coffee_improved_cost',
-        'coffee_acreage_fertilizer', 'coffee_fertilizer_cost', 'coffee_chemical_acreage',
-        'coffee_chemical_cost', 'coffee_machinery_acreage', 'coffee_machinery_cost',
-        'coffee_harvested', 'coffee_sold_price', 'coffee_harvest_loss'
-    ]):
-        # Convert the request to CoffeePredictionRequest model
-        data = CoffeePredictionRequest(**request)
-        input_data = [[
-            data.coffee_acreage, data.coffee_improved_acreage, data.coffee_improved_cost,
-            data.coffee_acreage_fertilizer, data.coffee_fertilizer_cost, data.coffee_chemical_acreage,
-            data.coffee_chemical_cost, data.coffee_machinery_acreage, data.coffee_machinery_cost,
-            data.coffee_harvested, data.coffee_sold_price, data.coffee_harvest_loss
-        ]]
+        # Generic input for other crops (e.g., cafe, frijol, maiz)
+        elif crop_type in ["cafe", "frijol", "maiz"]:
+            required_keys = [
+                "acreage", "improved_acreage", "improved_cost",
+                "acreage_fertilizer", "fertilizer_cost", "chemical_acreage",
+                "chemical_cost", "machinery_acreage", "machinery_cost",
+                "harvested", "sold_price", "harvest_loss"
+            ]
+            if not all(key in input_data for key in required_keys):
+                raise HTTPException(status_code=400, detail=f"Datos de entrada incompletos para {crop_type}")
 
-        # Run prediction with the coffee model
-        try:
-            input_name = coffee_session.get_inputs()[0].name
-            prediction = coffee_session.run(None, {input_name: input_data})[0][0]
-            return {"Modelo": "Café", "Rendimiento_Predicho": float(prediction)}
-        except Exception as e:
-            print("Error al realizar la predicción de café:", e)
-            raise HTTPException(status_code=500, detail=f"Error en la predicción de café: {str(e)}")
+            input_values = [[
+                input_data.get("acreage", 0.0), input_data.get("improved_acreage", 0.0), input_data.get("improved_cost", 0.0),
+                input_data.get("acreage_fertilizer", 0.0), input_data.get("fertilizer_cost", 0.0), input_data.get("chemical_acreage", 0.0),
+                input_data.get("chemical_cost", 0.0), input_data.get("machinery_acreage", 0.0), input_data.get("machinery_cost", 0.0),
+                input_data.get("harvested", 0.0), input_data.get("sold_price", 0.0), input_data.get("harvest_loss", 0.0)
+            ]]
+            # Run prediction with the model
+            input_name = sessions[crop_type].get_inputs()[0].name
+            prediction = sessions[crop_type].run(None, {input_name: input_values})[0][0]
 
-    else:
-        # If the request does not match either model's format
-        raise HTTPException(status_code=400, detail="Formato de JSON no reconocido. Verifique los datos de entrada.")
+            return {"Modelo": crop_type.capitalize(), "Rendimiento_Predicho": float(prediction)}
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en la predicción de {crop_type}: {str(e)}")
 
 # Root endpoint for testing
 @app.get("/")
 def read_root():
-    return {"message": "Modelo de predicciones de cacao y café listo"}
+    return {"message": "Modelo de predicciones de cultivos listo"}
 
 # Run with Uvicorn
 if __name__ == "__main__":
