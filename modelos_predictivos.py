@@ -26,6 +26,28 @@ class PredictionRequest(BaseModel):
     crop_type: str
     parameters: dict
 
+# Function to get cacao advice based on classification
+def get_cacao_advice(classification):
+    advice = {
+        "bajo": [
+            "Realiza análisis de suelo y añade materia orgánica.",
+            "Monitorea plagas y usa controles biológicos.",
+            "Reemplaza plantas de bajo rendimiento y poda regularmente.",
+            "Asegura un riego adecuado, especialmente en temporada seca."
+        ],
+        "medio": [
+            "Aplica fertilizantes balanceados en varias etapas.",
+            "Optimiza la recolección y fermentación para mejorar la calidad.",
+            "Aplica controles preventivos de enfermedades."
+        ],
+        "alto": [
+            "Mantén las prácticas actuales de manejo.",
+            "Usa sensores y automatización para optimizar el riego.",
+            "Capacita al personal en técnicas avanzadas de poscosecha.",
+        ]
+    }
+    return advice.get(classification, [])
+
 @app.post("/predict")
 def predict(request: PredictionRequest):
     crop_type = request.crop_type.lower()
@@ -46,15 +68,19 @@ def predict(request: PredictionRequest):
                 input_data["Area_Cosechada"],
                 input_data["Produccion"]
             ]]
-            # Classification logic specific to cacao
+            # Run prediction and classify
             input_name = sessions[crop_type].get_inputs()[0].name
             prediction = sessions[crop_type].run(None, {input_name: input_values})[0][0]
             clasificacion = "bajo" if prediction < 0.3 else "medio" if prediction < 0.7 else "alto"
 
+            # Get cacao advice based on classification
+            consejos = get_cacao_advice(clasificacion)
+
             return {
                 "Modelo": "Cacao",
                 "Rendimiento_Predicho": float(prediction),
-                "Clasificacion": clasificacion
+                "Clasificacion": clasificacion,
+                "Consejos": consejos
             }
 
         # Generic input for other crops (e.g., cafe, frijol, maiz)
