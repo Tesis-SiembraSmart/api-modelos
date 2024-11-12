@@ -5,7 +5,7 @@ import onnxruntime as rt
 
 # Load both ONNX models
 try:
-    cacao_session = rt.InferenceSession("cacao_rf_model.onnx")
+    cacao_session = rt.InferenceSession("modelo_cacao.onnx")
     print("Modelo de cacao cargado exitosamente.")
 except Exception as e:
     print("Error al cargar el modelo de cacao ONNX:", e)
