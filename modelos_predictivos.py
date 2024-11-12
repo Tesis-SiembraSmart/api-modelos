@@ -5,7 +5,7 @@ import onnxruntime as rt
 
 # Load both ONNX models
 try:
-    cacao_session = rt.InferenceSession("modelo_cacao.onnx")
+    cacao_session = rt.InferenceSession("rf_model_cacao.onnx")
     print("Modelo de cacao cargado exitosamente.")
 except Exception as e:
     print("Error al cargar el modelo de cacao ONNX:", e)
@@ -51,7 +51,25 @@ def predict(request: dict):
         try:
             input_name = cacao_session.get_inputs()[0].name
             prediction = cacao_session.run(None, {input_name: input_data})[0][0]
-            return {"Modelo": "Cacao", "Rendimiento_Predicho": float(prediction)}
+            
+            # Classify the prediction result
+
+
+            if prediction < 0.3:
+                clasificacion = "bajo"
+            elif 0.3 <= prediction < 0.7:
+                clasificacion = "medio"
+            else:
+                clasificacion = "alto"
+
+            # Log the classification in the console
+            print(f'Clasificación de rendimiento: {clasificacion}')
+
+            return {
+                "Modelo": "Cacao",
+                "Rendimiento_Predicho": float(prediction),
+                "Clasificacion": clasificacion
+            }
         except Exception as e:
             print("Error al realizar la predicción de cacao:", e)
             raise HTTPException(status_code=500, detail=f"Error en la predicción de cacao: {str(e)}")
@@ -83,6 +101,7 @@ def predict(request: dict):
     else:
         # If the request does not match either model's format
         raise HTTPException(status_code=400, detail="Formato de JSON no reconocido. Verifique los datos de entrada.")
+
 
 # Root endpoint for testing
 @app.get("/")
