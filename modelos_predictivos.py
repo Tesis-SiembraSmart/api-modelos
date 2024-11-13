@@ -7,6 +7,7 @@ models = {
     "cacao": "rf_model_cacao.onnx",
     "cafe": "rf_model_cafe.onnx",
     "maiz": "rf_model_maiz.onnx",
+    "frijol": "rf_model_frijol.onnx"
 }
 sessions = {}
 
@@ -44,6 +45,26 @@ def get_cacao_advice(classification):
             "Mantén las prácticas actuales de manejo.",
             "Usa sensores y automatización para optimizar el riego.",
             "Capacita al personal en técnicas avanzadas de poscosecha.",
+        ]
+    }
+    return advice.get(classification, [])
+
+def get_frijol_advice(classification):
+    advice = {
+        "bajo": [
+            "Realiza un análisis de suelo para identificar deficiencias de nutrientes.",
+            "Aumenta la frecuencia de monitoreo para plagas y enfermedades.",
+            "Aplica materia orgánica para mejorar la fertilidad del suelo.",
+        ],
+        "medio": [
+            "Optimiza las prácticas de fertilización, aplicando nutrientes balanceados.",
+            "Monitorea el riego para evitar problemas de exceso o falta de agua.",
+            "Realiza controles preventivos de plagas para minimizar pérdidas.",
+        ],
+        "alto": [
+            "Mantén las prácticas actuales para asegurar la calidad y cantidad de la cosecha.",
+            "Considera el uso de sensores de suelo para optimizar el riego y la fertilización.",
+            "Capacita al personal en técnicas avanzadas de manejo postcosecha.",
         ]
     }
     return advice.get(classification, [])
@@ -116,6 +137,21 @@ def calcular_filter_quartile_maiz(maize_hectare, maize_harvested, maize_sold_pri
 def calcular_filter_maiz(maize_hectare, maize_harvested, maize_sold_price, maize_harvest_loss):
     return maize_hectare + maize_harvested + maize_sold_price + maize_harvest_loss + maize_harvested
 
+# Función para calcular el cuartil para frijol basado en la suma de ciertas características
+def calcular_filter_quartile_frijol(beans_hectare, beans_harvested, beans_sold_price, beans_harvest_loss):
+    suma = beans_hectare + beans_harvested + beans_sold_price + beans_harvest_loss + beans_harvested
+    if suma < 1387.5:
+        return 0
+    elif 1387.5 <= suma <= 2005.5:
+        return 1
+    elif 2005.5 <= suma <= 2700.5:
+        return 2
+    else:
+        return 3
+
+# Función para calcular el filtro para frijol
+def calcular_filter_frijol(beans_hectare, beans_harvested, beans_sold_price, beans_harvest_loss):
+    return beans_hectare + beans_harvested + beans_sold_price + beans_harvest_loss + beans_harvested
 
 
 @app.post("/predict")
@@ -210,13 +246,6 @@ def predict(request: PredictionRequest):
 
 
 
-
-
-
-
-
-
-
         # Input específico para maíz con filter_quartile y clasificación
         elif crop_type == "maiz":
             required_keys = [
@@ -278,6 +307,66 @@ def predict(request: PredictionRequest):
                 "Consejos": consejos,
             }
     
+    # Input específico para frijol con filter_quartile y clasificación
+        elif crop_type == "frijol":
+            required_keys = [
+                "Year", "beans_hectare", "beans_improved_hectare", "beans_improved_cost",
+                "beans_hectare_fertilizer", "beans_fertilizer_cost", "beans_chemical_hectare",
+                "beans_chemical_cost", "beans_machinery_hectare", "beans_machinery_cost",
+                "beans_harvested", "beans_sold_price", "beans_harvest_loss"
+            ]
+            
+            # Verificar que todos los parámetros necesarios estén presentes
+            missing_keys = [key for key in required_keys if key not in input_data]
+            if missing_keys:
+                raise HTTPException(status_code=400, detail=f"Datos de entrada incompletos para frijol. Faltan los siguientes campos: {', '.join(missing_keys)}")
+
+            # Calcular filter y filter_quartile basado en los datos de entrada
+            filter = calcular_filter_frijol(
+                input_data["beans_hectare"],
+                input_data["beans_harvested"],
+                input_data["beans_sold_price"],
+                input_data["beans_harvest_loss"]
+            )
+            filter_quartile = calcular_filter_quartile_frijol(
+                input_data["beans_hectare"],
+                input_data["beans_harvested"],
+                input_data["beans_sold_price"],
+                input_data["beans_harvest_loss"]
+            )
+
+            # Crear el conjunto de valores de entrada incluyendo filter y filter_quartile
+            input_values = [[
+                input_data["Year"], input_data["beans_hectare"], input_data["beans_improved_hectare"], 
+                input_data["beans_improved_cost"], input_data["beans_hectare_fertilizer"], 
+                input_data["beans_fertilizer_cost"], input_data["beans_chemical_hectare"],
+                input_data["beans_chemical_cost"], input_data["beans_machinery_hectare"], 
+                input_data["beans_machinery_cost"], input_data["beans_harvested"], 
+                input_data["beans_sold_price"], input_data["beans_harvest_loss"], 
+                filter, filter_quartile
+            ]]
+            
+            # Ejecutar predicción con el modelo
+            input_name = sessions[crop_type].get_inputs()[0].name
+            prediction = sessions[crop_type].run(None, {input_name: input_values})[0][0]
+            
+            # Clasificar el rendimiento para frijol
+            if prediction < 40.0:
+                clasificacion = "bajo"
+            elif 40.0 <= prediction <= 250.0:
+                clasificacion = "medio"
+            else:
+                clasificacion = "alto"
+            
+            # Obtener consejos para frijol basado en la clasificación
+            consejos = get_frijol_advice(clasificacion)
+
+            return {
+                "Modelo": "Frijol",
+                "Rendimiento_Predicho": float(prediction),
+                "Clasificacion": clasificacion,
+                "Consejos": consejos,
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en la predicción de {crop_type}: {str(e)}")
 
